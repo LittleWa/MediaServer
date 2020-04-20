@@ -13,6 +13,7 @@
 #include <ctype.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 #include "server.h"
 
@@ -20,6 +21,7 @@
 
 #define MAX_EVENTS 20
 #define TIMEOUT 500
+#define MAX_PROCESS 4
 
 namespace server_ns
 {
@@ -62,59 +64,76 @@ void Server::run()
 
     socklen_t len = 0;
 
-    // epoll 方式
-    int epoll_fd = epoll_create(256);
-    struct epoll_event ev, events[MAX_EVENTS];
-    ev.events = EPOLLIN; // 输入事件
-    ev.data.fd = s_fd;
-    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, s_fd, &ev); // 添加侦听的socket fd
-    int event_number;
-
-    while (true)
+    // 创建进程
+    int pid = -1;
+    for (auto i = 0; i < MAX_PROCESS; i++)
     {
-        event_number = epoll_wait(epoll_fd, events, MAX_EVENTS, TIMEOUT); // 返回事件变化的文件描述符数量
-        for (auto i = 0; i < event_number; i++)
+        if (pid != 0)
+            pid = fork();
+    }
+    if (pid == 0)
+    {
+
+        // epoll 方式
+        int epoll_fd = epoll_create(256);
+        struct epoll_event ev, events[MAX_EVENTS];
+        ev.events = EPOLLIN; // 输入事件
+        ev.data.fd = s_fd;
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, s_fd, &ev); // 添加侦听的socket fd
+        int event_number;
+        while (true)
         {
-            if (events[i].data.fd == s_fd)
+            event_number = epoll_wait(epoll_fd, events, MAX_EVENTS, TIMEOUT); // 返回事件变化的文件描述符数量
+            for (auto i = 0; i < event_number; i++)
             {
-                // 建立与客户端的链接，返回客户端的套接字描述符，阻塞等待连接
-                int c_fd = accept(s_fd, (struct sockaddr *)&c_addr, &len);
-                int flags = fcntl(c_fd, F_GETFL, 0);
-                fcntl(c_fd, F_SETFL, flags | O_NONBLOCK); // 设置非阻塞
-
-                ev.events = EPOLLIN | EPOLLET; // 设置边缘触发
-                ev.data.fd = c_fd;
-                epoll_ctl(epoll_fd, EPOLL_CTL_ADD, c_fd, &ev);
-            }
-            else if (events[i].events & EPOLLIN)
-            {
-                int n;
-                do
+                if (events[i].data.fd == s_fd)
                 {
-                    char ip_buf[33];
-                    char ip_addr[BUFSIZ];
+                    // 建立与客户端的链接，返回客户端的套接字描述符，阻塞等待连接
+                    int c_fd = accept(s_fd, (struct sockaddr *)&c_addr, &len);
+                    int flags = fcntl(c_fd, F_GETFL, 0);
+                    fcntl(c_fd, F_SETFL, flags | O_NONBLOCK); // 设置非阻塞
 
-                    // 打印连接的客户端的ip地址与端口
-                    inet_ntop(AF_INET, &c_addr.sin_addr.s_addr, ip_buf, sizeof(ip_buf));
-                    std::cout << "client ip:" << ip_buf << std::endl; //ntohl(c_addr.sin_addr.s_addr) << endl;
-                    std::cout << "client port: " << ntohs(c_addr.sin_port) << std::endl;
+                    ev.events = EPOLLIN | EPOLLET; // 设置边缘触发
+                    ev.data.fd = c_fd;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, c_fd, &ev);
+                }
+                else if (events[i].events & EPOLLIN)
+                {
+                    int n;
+                    do
+                    {
+                        char ip_buf[33];
+                        char ip_addr[BUFSIZ];
 
-                    n = read(events[i].data.fd, buf, sizeof(buf)); // 读取客户端的请求内容,返回字节大小
-                    std::cout << "receive:" << buf << std::endl;
-                    if (n == 0)
-                        close(events[i].data.fd);
-                } while (n < -1 && errno == EINTR);
-                if (n > 0)
-                { // 对字节进行小写->大写的转换
-                    for (int i = 0; i < n; i++)
-                        buf[i] = toupper(buf[i]);
-                    write(events[i].data.fd, buf, n); // 通过客户端套接字写回客户端
+                        // 打印连接的客户端的ip地址与端口
+                        inet_ntop(AF_INET, &c_addr.sin_addr.s_addr, ip_buf, sizeof(ip_buf));
+                        std::cout << "client ip:" << ip_buf << std::endl; //ntohl(c_addr.sin_addr.s_addr) << endl;
+                        std::cout << "client port: " << ntohs(c_addr.sin_port) << std::endl;
+
+                        n = read(events[i].data.fd, buf, sizeof(buf)); // 读取客户端的请求内容,返回字节大小
+                        std::cout << "receive:" << buf << std::endl;
+                        if (n == 0)
+                            close(events[i].data.fd);
+                    } while (n < -1 && errno == EINTR);
+                    if (n > 0)
+                    { // 对字节进行小写->大写的转换
+                        for (int i = 0; i < n; i++)
+                            buf[i] = toupper(buf[i]);
+                        write(events[i].data.fd, buf, n); // 通过客户端套接字写回客户端
+                    }
                 }
             }
         }
-    }
 
-    close(s_fd);
+        close(s_fd);
+    }
+    else
+    { // pid != 0 父进程， 等待所有子进程结束
+        do
+        {
+            waitpid(-1, NULL, 0);
+        } while (pid != -1);
+    }
 }
 
 } // namespace server_ns
