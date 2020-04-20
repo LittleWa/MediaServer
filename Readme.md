@@ -21,3 +21,13 @@
 ###### g++ -std=c++11 -g -o Server main.cpp server.cpp
 ###### cd server
 ###### g++ -std=c++11 -g -o Server main.cpp server.cpp
+
+## 基础服务器编程-TCP  /Libevent实现高性能服务器
+#### libevent的编译与安装
+1 http://libevent/org  
+2 wget -c addr --no-check-certificate  
+3 ./configure --prefix=/usr/local/libevent  
+4 sudo make && sudo make install
+5 配置环境变量  
+运行方式：cd MediaServer/server_libevent  
+                $ g++ -std=c++11 -g -o Server main.cpp server.cpp `pkg-config --libs --cflags libevent`
